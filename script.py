@@ -21,10 +21,36 @@ RETRY_BACKOFF_BASE = 1.5
 # Official NSE equity symbol master file (SYMBOL, NAME OF COMPANY, ...)
 SYMBOL_MASTER_URL = "https://archives.nseindia.com/content/equity/EQUITY_L.csv"
 
+# The GitHub Actions runner is thrown away after every job, so the message ID
+# has to be written to a file and restored (via actions/cache in the workflow)
+# rather than just kept in memory, or a new job would always start a fresh message.
+MESSAGE_ID_FILE = "discord_message_id.txt"
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Global tracking variable to maintain the active Discord message ID across loops
 ACTIVE_MESSAGE_ID = None
+
+
+def load_message_id():
+    try:
+        if os.path.exists(MESSAGE_ID_FILE):
+            with open(MESSAGE_ID_FILE, "r") as f:
+                content = f.read().strip()
+                if content:
+                    logging.info(f"Restored cached Discord message ID: {content}")
+                    return content
+    except Exception as e:
+        logging.warning(f"Could not read cached message ID: {e}")
+    return None
+
+
+def save_message_id(message_id):
+    try:
+        with open(MESSAGE_ID_FILE, "w") as f:
+            f.write(str(message_id))
+    except Exception as e:
+        logging.warning(f"Could not save message ID to cache file: {e}")
 
 
 def get_all_symbols(session, headers):
@@ -163,7 +189,7 @@ def process_and_upload():
         f"Updated At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST\n"
         f"Symbols with announcements today ({len(unique_symbols)} of {len(tracked_symbols)} scanned): "
         f"{', '.join(unique_symbols)}\n"
-        f"Note: This message automatically updates every 5 minutes to keep your channel clean."
+        f"Note: This message automatically updates every 3.5 minutes to keep your channel clean."
     )
 
     try:
@@ -174,9 +200,14 @@ def process_and_upload():
                 files = {"file": (csv_filename, file_to_upload, "text/csv")}
                 response = requests.patch(edit_url, data=payload, files=files, timeout=15)
                 if response.status_code < 300:
+                    save_message_id(ACTIVE_MESSAGE_ID)
                     logging.info("Existing Discord message successfully updated and replaced.")
                     return
                 else:
+                    # A 404 here usually means the message was deleted manually in Discord.
+                    # Clear the cached ID so we fall through to posting a fresh one below.
+                    if response.status_code == 404:
+                        ACTIVE_MESSAGE_ID = None
                     logging.warning(f"Failed to edit message. Attempting a clean repost. Status: {response.status_code}")
 
         post_url = f"{DISCORD_WEBHOOK_URL}?wait=true"
@@ -186,6 +217,7 @@ def process_and_upload():
             response = requests.post(post_url, data=payload, files=files, timeout=15)
             if response.status_code < 300:
                 ACTIVE_MESSAGE_ID = response.json().get("id")
+                save_message_id(ACTIVE_MESSAGE_ID)
                 logging.info(f"Initial snapshot posted. Captured message ID: {ACTIVE_MESSAGE_ID}")
             else:
                 logging.error(f"Discord upload failed. Status code: {response.status_code}")
@@ -199,8 +231,15 @@ def process_and_upload():
 
 if __name__ == "__main__":
     logging.info("Persistent full-market announcement scanner active.")
-    for i in range(36):
-        logging.info(f"Executing cycle loop number: {i + 1} of 36")
+    ACTIVE_MESSAGE_ID = load_message_id()
+
+    # 3.5 minutes per cycle x 51 cycles ≈ 178.5 minutes, fitting inside the
+    # 3-hour (180 minute) window before your workflow's cron restarts the job.
+    TOTAL_CYCLES = 51
+    CYCLE_SECONDS = 210  # 3.5 minutes
+
+    for i in range(TOTAL_CYCLES):
+        logging.info(f"Executing cycle loop number: {i + 1} of {TOTAL_CYCLES}")
         process_and_upload()
-        logging.info("Cycle complete. Waiting exactly 5 minutes...")
-        time.sleep(300)
+        logging.info("Cycle complete. Waiting 3.5 minutes...")
+        time.sleep(CYCLE_SECONDS)
