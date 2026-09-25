@@ -11,12 +11,12 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
 
 # How many symbols to hit NSE with at once. NSE rate-limits aggressively,
 # so this is intentionally conservative rather than maxed out.
-MAX_WORKERS = 15
+MAX_WORKERS = 35
 
 # How many times to retry a symbol if the request fails or gets rate-limited,
 # and how long to wait between retries (seconds, doubles each attempt).
-MAX_RETRIES = 3
-RETRY_BACKOFF_BASE = 1.5
+MAX_RETRIES = 2
+RETRY_BACKOFF_BASE = 2.5
 
 # Official NSE equity symbol master file (SYMBOL, NAME OF COMPANY, ...)
 SYMBOL_MASTER_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
@@ -114,6 +114,12 @@ def process_and_upload():
 
     try:
         session = requests.Session()
+        # Default pool holds 10 connections; with MAX_WORKERS threads hitting it
+        # concurrently, a smaller pool forces requests to keep discarding and
+        # reopening connections instead of reusing them.
+        adapter = requests.adapters.HTTPAdapter(pool_connections=MAX_WORKERS, pool_maxsize=MAX_WORKERS)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
         session.get(base_url, headers=headers, timeout=8)
         time.sleep(0.5)
     except Exception as session_err:
@@ -189,7 +195,7 @@ def process_and_upload():
         f"Updated At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST\n"
         f"Symbols with announcements today ({len(unique_symbols)} of {len(tracked_symbols)} scanned): "
         f"{', '.join(unique_symbols)}\n"
-        f"Note: This message automatically updates every 3.5 minutes to keep your channel clean."
+        f"Note: This message automatically updates every 4.5 minutes to keep your channel clean."
     )
 
     try:
@@ -233,13 +239,13 @@ if __name__ == "__main__":
     logging.info("Persistent full-market announcement scanner active.")
     ACTIVE_MESSAGE_ID = load_message_id()
 
-    # 3.5 minutes per cycle x 51 cycles ≈ 178.5 minutes, fitting inside the
-    # 3-hour (180 minute) window before your workflow's cron restarts the job.
-    TOTAL_CYCLES = 51
-    CYCLE_SECONDS = 210  # 3.5 minutes
+    # 4.5 minutes per cycle x 40 cycles = 180 minutes, exactly matching the
+    # 3-hour window before your workflow's cron restarts the job.
+    TOTAL_CYCLES = 40
+    CYCLE_SECONDS = 270  # 4.5 minutes
 
     for i in range(TOTAL_CYCLES):
         logging.info(f"Executing cycle loop number: {i + 1} of {TOTAL_CYCLES}")
         process_and_upload()
-        logging.info("Cycle complete. Waiting 3.5 minutes...")
+        logging.info("Cycle complete. Waiting 4.5 minutes...")
         time.sleep(CYCLE_SECONDS)
