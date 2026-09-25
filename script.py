@@ -21,13 +21,15 @@ def fetch_symbol_data(session, symbol, headers):
     api_url = "https://www.nseindia.com/api/corporate-announcements"
     query_params = {"index": "equities", "symbol": symbol}
     try:
-        response = session.get(api_url, headers=headers, params=query_params, timeout=10)
+        response = session.get(api_url, headers=headers, params=query_params, timeout=8)
         if response.status_code == 200:
             return response.json()
         else:
-            return []
+            logging.warning(f"Non-200 response for {symbol}: {response.status_code}")
+            return None
     except Exception as e:
-        return []
+        logging.error(f"Network request failed for {symbol}: {e}")
+        return None
 
 def process_and_upload():
     if not DISCORD_WEBHOOK_URL:
@@ -48,56 +50,57 @@ def process_and_upload():
         session = requests.Session()
         session.get(base_url, headers=headers, timeout=10)
         time.sleep(1)
-        
-        for symbol in TRACKED_SYMBOLS:
-            logging.info(f"Pulling data for structure: {symbol}")
-            raw_data = fetch_symbol_data(session, symbol, headers)
-            
-            if raw_data and len(raw_data) > 0:
-                for item in raw_data:
-                    # FIXED: Mapped keys to match exact NSE dictionary responses
-                    comp_name = item.get("sm_name")
-                    date_time = item.get("an_dt")
-                    subject = item.get("desc")
-                    details = item.get("attchmntText")
-                    file_pdf = item.get("attchmntFile")
-                    
-                    # Generate the real PDF archival link hosted directly by the exchange
-                    pdf_link = f"https://nsearchives.nseindia.com/corporate/{file_pdf}" if file_pdf else "None"
-                    
-                    record = {
-                        "Symbol": symbol,
-                        "Company Name": comp_name if comp_name else "N/A",
-                        "Broadcast Date/Time": date_time if date_time else "N/A",
-                        "Subject": subject if subject else "None",
-                        "Details": details if details else "None",
-                        "Attachment Link": pdf_link
-                    }
-                    all_records.append(record)
-            else:
-                # Cleaner formatting for quiet windows instead of spamming NaN
-                record = {
-                    "Symbol": symbol,
-                    "Company Name": "N/A",
-                    "Broadcast Date/Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    "Subject": "No announcements",
-                    "Details": "No corporate updates filed in this window",
-                    "Attachment Link": "None"
-                }
-                all_records.append(record)
-            time.sleep(0.45)
-            
     except Exception as session_err:
-        logging.error(f"Scraper error: {session_err}")
+        logging.error(f"Session initialization failed completely: {session_err}")
         return
 
-    if not all_records:
+    # Process each symbol safely
+    for symbol in TRACKED_SYMBOLS:
+        logging.info(f"Pulling data for structure: {symbol}")
+        raw_data = fetch_symbol_data(session, symbol, headers)
+        has_announcements = False
+        
+        # If the request worked and returned data
+        if raw_data is not None and isinstance(raw_data, list) and len(raw_data) > 0:
+            for item in raw_data:
+                if isinstance(item, dict) and item.get("desc"):
+                    has_announcements = True
+                    comp_name = item.get("sm_name", "N/A")
+                    date_time = item.get("an_dt", "N/A")
+                    subject = item.get("desc", "None")
+                    details = item.get("attchmntText", "None")
+                    file_pdf = item.get("attchmntFile", "")
+                    pdf_link = f"https://nsearchives.nseindia.com/corporate/{file_pdf}" if file_pdf else "None"
+                    
+                    all_records.append({
+                        "Symbol": symbol,
+                        "Company Name": comp_name,
+                        "Broadcast Date/Time": date_time,
+                        "Subject": subject,
+                        "Details": details,
+                        "Attachment Link": pdf_link
+                    })
+                    
+        # Fallback if no announcements are found or if the network request for this stock failed
+        if not has_announcements:
+            all_records.append({
+                "Symbol": symbol,
+                "Company Name": "N/A",
+                "Broadcast Date/Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "Subject": "No announcements",
+                "Details": "No corporate updates filed in this window",
+                "Attachment Link": "None"
+            })
+        time.sleep(0.45)
+
+    if len(all_records) == 0:
+        logging.warning("No records compiled. Table matrix empty.")
         return
 
     df = pd.DataFrame(all_records)
     df = df.fillna("None")
     
-    # Sort the rows dynamically so active notices bubble to the top of your CSV sheet
+    # Sort notices dynamically so active updates bubble to the very top rows
     df["is_active"] = df["Subject"] != "No announcements"
     df = df.sort_values(by="is_active", ascending=False).drop(columns=["is_active"])
     
@@ -107,13 +110,15 @@ def process_and_upload():
 
     try:
         payload = {
-            "content": f"📊 NSE Corporate Announcements Report (30-Symbol Cleaner Feed)\nGenerated At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST"
+            "content": f"📊 NSE Corporate Announcements Report (30-Symbol Live Feed)\nGenerated At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST"
         }
         with open(csv_filename, "rb") as file_to_upload:
             files = {"file": (csv_filename, file_to_upload, "text/csv")}
             response = requests.post(DISCORD_WEBHOOK_URL, data=payload, files=files, timeout=15)
             if response.status_code < 300:
                 logging.info("CSV snapshot successfully delivered to Discord.")
+            else:
+                logging.error(f"Discord upload rejected payload. Server responded with: {response.status_code}")
     except Exception as e:
         logging.error(f"Failed to transmit data to Discord: {e}")
     finally:
