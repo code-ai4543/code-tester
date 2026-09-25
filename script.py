@@ -18,8 +18,10 @@ TRACKED_SYMBOLS = [
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+# Global tracking variable to maintain the active Discord message ID across loops
+ACTIVE_MESSAGE_ID = None
+
 def fetch_symbol_data(session, symbol, headers):
-    """Worker function to fetch data for a single symbol."""
     api_url = "https://www.nseindia.com/api/corporate-announcements"
     query_params = {"index": "equities", "symbol": symbol}
     try:
@@ -31,6 +33,7 @@ def fetch_symbol_data(session, symbol, headers):
         return symbol, None
 
 def process_and_upload():
+    global ACTIVE_MESSAGE_ID
     if not DISCORD_WEBHOOK_URL:
         logging.error("Missing DISCORD_WEBHOOK environment variable.")
         return
@@ -54,16 +57,14 @@ def process_and_upload():
         return
 
     today_str = datetime.now().strftime("%d-%b-%Y")
-    
-    # High-Speed Parallel Processing Engine (10 Workers running concurrently)
     symbol_results = {}
+    
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(fetch_symbol_data, session, sym, headers): sym for sym in TRACKED_SYMBOLS}
         for future in as_completed(futures):
             sym, res = future.result()
             symbol_results[sym] = res
 
-    # Process findings instantly out of the parallel response array
     for symbol in TRACKED_SYMBOLS:
         raw_data = symbol_results.get(symbol)
         has_announcements = False
@@ -118,17 +119,38 @@ def process_and_upload():
     csv_filename = f"nse_announcements_{timestamp}.csv"
     df.to_csv(csv_filename, index=False)
 
+    # Clean text payload listing all active symbols explicitly
+    symbols_string = ", ".join(TRACKED_SYMBOLS)
+    content_text = f"📊 NSE Daily Corporate Announcements Report (Latest Snapshot)\nUpdated At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST\nScanned Symbols ({len(TRACKED_SYMBOLS)}): {symbols_string}\nNote: This message automatically updates every 5 minutes to keep your channel clean."
+
     try:
-        payload = {
-            "content": f"⚡ NSE Daily Corporate Announcements Report (Ultra High-Speed Feed)\nGenerated At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST"
-        }
+        # If an active message already exists in the chat, update it via target endpoints
+        if ACTIVE_MESSAGE_ID:
+            edit_url = f"{DISCORD_WEBHOOK_URL}/messages/{ACTIVE_MESSAGE_ID}"
+            payload = {"content": content_text}
+            with open(csv_filename, "rb") as file_to_upload:
+                files = {"file": (csv_filename, file_to_upload, "text/csv")}
+                # Webhooks require a PATCH request to edit existing entries and overwrite attachments
+                response = requests.patch(edit_url, data=payload, files=files, timeout=15)
+                if response.status_code < 300:
+                    logging.info("Existing Discord message successfully updated and replaced.")
+                    return
+                else:
+                    logging.warning(f"Failed to edit message. Attempting a clean repost. Status: {response.status_code}")
+
+        # Post a fresh message if it's the very first run or if editing failed
+        post_url = f"{DISCORD_WEBHOOK_URL}?wait=true"
+        payload = {"content": content_text}
         with open(csv_filename, "rb") as file_to_upload:
             files = {"file": (csv_filename, file_to_upload, "text/csv")}
-            response = requests.post(DISCORD_WEBHOOK_URL, data=payload, files=files, timeout=15)
+            response = requests.post(post_url, data=payload, files=files, timeout=15)
             if response.status_code < 300:
-                logging.info("CSV snapshot successfully delivered to Discord.")
+                # Capture the message ID returned by Discord so we can edit it in the next loop
+                ACTIVE_MESSAGE_ID = response.json().get("id")
+                logging.info(f"Initial snapshot posted. Captured message ID: {ACTIVE_MESSAGE_ID}")
             else:
                 logging.error(f"Discord upload failed. Status code: {response.status_code}")
+                
     except Exception as e:
         logging.error(f"Failed to transmit data to Discord: {e}")
     finally:
@@ -136,7 +158,7 @@ def process_and_upload():
             os.remove(csv_filename)
 
 if __name__ == "__main__":
-    logging.info("Persistent High-Speed Scraper Engine activated.")
+    logging.info("Persistent High-Speed Auto-Overwriting Scraper active.")
     for i in range(36):
         logging.info(f"Executing cycle loop number: {i + 1} of 36")
         process_and_upload()
