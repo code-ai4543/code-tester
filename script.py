@@ -15,9 +15,9 @@ def process_and_upload():
         
     logging.info("Starting global market corporate announcement pipeline...")
     all_records = []
-    base_url = "nseindia.com"
+    base_url = "https://nseindia.com"
     # Global endpoint that fetches ALL equity market announcements at once
-    api_url = "nseindia.com"
+    api_url = "https://nseindia.com"
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
