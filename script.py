@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 import requests
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
 TRACKED_SYMBOLS = [
@@ -18,22 +19,23 @@ TRACKED_SYMBOLS = [
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 def fetch_symbol_data(session, symbol, headers):
+    """Worker function to fetch data for a single symbol."""
     api_url = "https://www.nseindia.com/api/corporate-announcements"
     query_params = {"index": "equities", "symbol": symbol}
     try:
-        response = session.get(api_url, headers=headers, params=query_params, timeout=8)
+        response = session.get(api_url, headers=headers, params=query_params, timeout=5)
         if response.status_code == 200:
-            return response.json()
-        return None
+            return symbol, response.json()
+        return symbol, None
     except Exception:
-        return None
+        return symbol, None
 
 def process_and_upload():
     if not DISCORD_WEBHOOK_URL:
         logging.error("Missing DISCORD_WEBHOOK environment variable.")
         return
     
-    logging.info("Pulling optimized market snapshot...")
+    logging.info("Starting high-speed concurrent market snapshot...")
     all_records = []
     base_url = "https://www.nseindia.com"
     headers = {
@@ -45,17 +47,25 @@ def process_and_upload():
     
     try:
         session = requests.Session()
-        session.get(base_url, headers=headers, timeout=10)
-        time.sleep(1)
+        session.get(base_url, headers=headers, timeout=8)
+        time.sleep(0.5)
     except Exception as session_err:
         logging.error(f"Session initialization failed completely: {session_err}")
         return
 
     today_str = datetime.now().strftime("%d-%b-%Y")
     
+    # High-Speed Parallel Processing Engine (10 Workers running concurrently)
+    symbol_results = {}
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(fetch_symbol_data, session, sym, headers): sym for sym in TRACKED_SYMBOLS}
+        for future in as_completed(futures):
+            sym, res = future.result()
+            symbol_results[sym] = res
+
+    # Process findings instantly out of the parallel response array
     for symbol in TRACKED_SYMBOLS:
-        logging.info(f"Pulling data for structure: {symbol}")
-        raw_data = fetch_symbol_data(session, symbol, headers)
+        raw_data = symbol_results.get(symbol)
         has_announcements = False
         
         if raw_data is not None and isinstance(raw_data, list) and len(raw_data) > 0:
@@ -69,7 +79,6 @@ def process_and_upload():
                         details = item.get("attchmntText", "None")
                         file_pdf = item.get("attchmntFile", "")
                         
-                        # FIXED: Checks for pre-existing domain declarations in the attachment string
                         if not file_pdf:
                             pdf_link = "None"
                         elif "http" in str(file_pdf):
@@ -95,7 +104,6 @@ def process_and_upload():
                 "Details": "No new corporate updates filed today",
                 "Attachment Link": "None"
             })
-        time.sleep(0.45)
 
     if len(all_records) == 0:
         return
@@ -112,7 +120,7 @@ def process_and_upload():
 
     try:
         payload = {
-            "content": f"📊 NSE Daily Corporate Announcements Report (30-Symbol Light Feed)\nGenerated At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST"
+            "content": f"⚡ NSE Daily Corporate Announcements Report (Ultra High-Speed Feed)\nGenerated At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST"
         }
         with open(csv_filename, "rb") as file_to_upload:
             files = {"file": (csv_filename, file_to_upload, "text/csv")}
@@ -128,7 +136,7 @@ def process_and_upload():
             os.remove(csv_filename)
 
 if __name__ == "__main__":
-    logging.info("Persistent Scraper Engine activated.")
+    logging.info("Persistent High-Speed Scraper Engine activated.")
     for i in range(36):
         logging.info(f"Executing cycle loop number: {i + 1} of 36")
         process_and_upload()
