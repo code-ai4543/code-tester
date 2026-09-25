@@ -51,8 +51,7 @@ def process_and_upload():
         logging.error(f"Session initialization failed completely: {session_err}")
         return
 
-    # Fetch today's current date string to filter incoming data frames
-    today_str = datetime.now().strftime("%d-%b-%Y") # e.g., 25-Sep-2026
+    today_str = datetime.now().strftime("%d-%b-%Y")
     
     for symbol in TRACKED_SYMBOLS:
         logging.info(f"Pulling data for structure: {symbol}")
@@ -63,15 +62,21 @@ def process_and_upload():
             for item in raw_data:
                 if isinstance(item, dict) and item.get("desc"):
                     date_time = item.get("an_dt", "N/A")
-                    # FILTER: Only process filings that happened today to keep file size small
                     if today_str in str(date_time):
                         has_announcements = True
                         comp_name = item.get("sm_name", "N/A")
                         subject = item.get("desc", "None")
                         details = item.get("attchmntText", "None")
                         file_pdf = item.get("attchmntFile", "")
-                        pdf_link = f"https://nsearchives.nseindia.com/corporate/{file_pdf}" if file_pdf else "None"
                         
+                        # FIXED: Checks for pre-existing domain declarations in the attachment string
+                        if not file_pdf:
+                            pdf_link = "None"
+                        elif "http" in str(file_pdf):
+                            pdf_link = file_pdf
+                        else:
+                            pdf_link = f"https://nsearchives.nseindia.com/corporate/{file_pdf}"
+                            
                         all_records.append({
                             "Symbol": symbol,
                             "Company Name": comp_name,
@@ -98,7 +103,6 @@ def process_and_upload():
     df = pd.DataFrame(all_records)
     df = df.fillna("None")
     
-    # Keep the sheet ultra clean by sorting today's active updates to the top rows
     df["is_active"] = df["Subject"] != "No announcements"
     df = df.sort_values(by="is_active", ascending=False).drop(columns=["is_active"])
     
