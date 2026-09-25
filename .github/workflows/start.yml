@@ -27,6 +27,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests pandas
 
+      # Restores the last known Discord message ID (if any) so this run edits
+      # the same message instead of posting a new one. Since exact cache keys
+      # can't be overwritten, we save under a unique key each run and restore
+      # from the most recent one matching the prefix.
+      - name: Restore Discord message ID cache
+        uses: actions/cache@v4
+        with:
+          path: discord_message_id.txt
+          key: discord-message-id-${{ github.run_id }}
+          restore-keys: |
+            discord-message-id-
+
       - name: Execute Scraper Engine
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
