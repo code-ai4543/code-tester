@@ -95,7 +95,7 @@ def process_and_upload():
             files = {"file": (csv_filename, file_to_upload, "text/csv")}
             response = requests.post(DISCORD_WEBHOOK_URL, data=payload, files=files, timeout=15)
             
-            if response.status_code in:
+            if response.status_code in [200, 204]:
                 logging.info("CSV snapshot successfully delivered to Discord.")
             else:
                 logging.error(f"Discord upload failed. Status code: {response.status_code}")
