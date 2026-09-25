@@ -53,24 +53,29 @@ def process_and_upload():
             logging.info(f"Pulling data for structure: {symbol}")
             raw_data = fetch_symbol_data(session, symbol, headers)
             
-            # Check if there are active announcements for this specific symbol
             if raw_data and len(raw_data) > 0:
                 for item in raw_data:
-                    comp_name = item.get("companyName")
-                    date_time = item.get("anng_dt")
+                    # FIXED: Mapped keys to match exact NSE dictionary responses
+                    comp_name = item.get("sm_name")
+                    date_time = item.get("an_dt")
                     subject = item.get("desc")
-                    details = item.get("details")
+                    details = item.get("attchmntText")
+                    file_pdf = item.get("attchmntFile")
+                    
+                    # Generate the real PDF archival link hosted directly by the exchange
+                    pdf_link = f"https://nsearchives.nseindia.com/corporate/{file_pdf}" if file_pdf else "None"
+                    
                     record = {
                         "Symbol": symbol,
                         "Company Name": comp_name if comp_name else "N/A",
                         "Broadcast Date/Time": date_time if date_time else "N/A",
                         "Subject": subject if subject else "None",
                         "Details": details if details else "None",
-                        "Attachment Link": f"https://www.nseindia.com{item.get('attachment', '')}" if item.get('attachment') else "None"
+                        "Attachment Link": pdf_link
                     }
                     all_records.append(record)
             else:
-                # If no announcements are found, write a clean status row instead of leaving it empty or blank
+                # Cleaner formatting for quiet windows instead of spamming NaN
                 record = {
                     "Symbol": symbol,
                     "Company Name": "N/A",
@@ -89,16 +94,20 @@ def process_and_upload():
     if not all_records:
         return
 
-    # Convert to format and forcefully clean up any hidden null/empty fields
     df = pd.DataFrame(all_records)
     df = df.fillna("None")
+    
+    # Sort the rows dynamically so active notices bubble to the top of your CSV sheet
+    df["is_active"] = df["Subject"] != "No announcements"
+    df = df.sort_values(by="is_active", ascending=False).drop(columns=["is_active"])
+    
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_filename = f"nse_announcements_{timestamp}.csv"
     df.to_csv(csv_filename, index=False)
 
     try:
         payload = {
-            "content": f"📊 NSE Corporate Announcements Report (30-Symbol Feed)\nGenerated At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST"
+            "content": f"📊 NSE Corporate Announcements Report (30-Symbol Cleaner Feed)\nGenerated At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST"
         }
         with open(csv_filename, "rb") as file_to_upload:
             files = {"file": (csv_filename, file_to_upload, "text/csv")}
