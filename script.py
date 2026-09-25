@@ -19,7 +19,7 @@ MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 1.5
 
 # Official NSE equity symbol master file (SYMBOL, NAME OF COMPANY, ...)
-SYMBOL_MASTER_URL = "https://archives.nseindia.com/content/equity/EQUITY_L.csv"
+SYMBOL_MASTER_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
 
 # The GitHub Actions runner is thrown away after every job, so the message ID
 # has to be written to a file and restored (via actions/cache in the workflow)
