@@ -1,0 +1,31 @@
+name: Run NSE Scraper
+
+on:
+  schedule:
+    # Triggers every 5 minutes automatically
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # Allows manual button-click triggers in the Actions tab
+
+jobs:
+  scrape_and_post:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository Code
+      uses: actions/checkout@v4
+
+    - name: Setup Python Environment
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install Python Dependencies
+      run: |
+        python -ms pip install --upgrade pip
+        pip install requests pandas
+
+    - name: Execute Scraper Engine
+      env:
+        # Securely maps your hidden Discord link into the program
+        DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+      run: python script.py
