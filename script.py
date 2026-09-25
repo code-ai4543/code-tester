@@ -24,11 +24,8 @@ def fetch_symbol_data(session, symbol, headers):
         response = session.get(api_url, headers=headers, params=query_params, timeout=8)
         if response.status_code == 200:
             return response.json()
-        else:
-            logging.warning(f"Non-200 response for {symbol}: {response.status_code}")
-            return None
-    except Exception as e:
-        logging.error(f"Network request failed for {symbol}: {e}")
+        return None
+    except Exception:
         return None
 
 def process_and_upload():
@@ -36,7 +33,7 @@ def process_and_upload():
         logging.error("Missing DISCORD_WEBHOOK environment variable.")
         return
     
-    logging.info("Pulling market snapshot...")
+    logging.info("Pulling optimized market snapshot...")
     all_records = []
     base_url = "https://www.nseindia.com"
     headers = {
@@ -54,53 +51,54 @@ def process_and_upload():
         logging.error(f"Session initialization failed completely: {session_err}")
         return
 
-    # Process each symbol safely
+    # Fetch today's current date string to filter incoming data frames
+    today_str = datetime.now().strftime("%d-%b-%Y") # e.g., 25-Sep-2026
+    
     for symbol in TRACKED_SYMBOLS:
         logging.info(f"Pulling data for structure: {symbol}")
         raw_data = fetch_symbol_data(session, symbol, headers)
         has_announcements = False
         
-        # If the request worked and returned data
         if raw_data is not None and isinstance(raw_data, list) and len(raw_data) > 0:
             for item in raw_data:
                 if isinstance(item, dict) and item.get("desc"):
-                    has_announcements = True
-                    comp_name = item.get("sm_name", "N/A")
                     date_time = item.get("an_dt", "N/A")
-                    subject = item.get("desc", "None")
-                    details = item.get("attchmntText", "None")
-                    file_pdf = item.get("attchmntFile", "")
-                    pdf_link = f"https://nsearchives.nseindia.com/corporate/{file_pdf}" if file_pdf else "None"
-                    
-                    all_records.append({
-                        "Symbol": symbol,
-                        "Company Name": comp_name,
-                        "Broadcast Date/Time": date_time,
-                        "Subject": subject,
-                        "Details": details,
-                        "Attachment Link": pdf_link
-                    })
-                    
-        # Fallback if no announcements are found or if the network request for this stock failed
+                    # FILTER: Only process filings that happened today to keep file size small
+                    if today_str in str(date_time):
+                        has_announcements = True
+                        comp_name = item.get("sm_name", "N/A")
+                        subject = item.get("desc", "None")
+                        details = item.get("attchmntText", "None")
+                        file_pdf = item.get("attchmntFile", "")
+                        pdf_link = f"https://nsearchives.nseindia.com/corporate/{file_pdf}" if file_pdf else "None"
+                        
+                        all_records.append({
+                            "Symbol": symbol,
+                            "Company Name": comp_name,
+                            "Broadcast Date/Time": date_time,
+                            "Subject": subject,
+                            "Details": details,
+                            "Attachment Link": pdf_link
+                        })
+                        
         if not has_announcements:
             all_records.append({
                 "Symbol": symbol,
                 "Company Name": "N/A",
                 "Broadcast Date/Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 "Subject": "No announcements",
-                "Details": "No corporate updates filed in this window",
+                "Details": "No new corporate updates filed today",
                 "Attachment Link": "None"
             })
         time.sleep(0.45)
 
     if len(all_records) == 0:
-        logging.warning("No records compiled. Table matrix empty.")
         return
 
     df = pd.DataFrame(all_records)
     df = df.fillna("None")
     
-    # Sort notices dynamically so active updates bubble to the very top rows
+    # Keep the sheet ultra clean by sorting today's active updates to the top rows
     df["is_active"] = df["Subject"] != "No announcements"
     df = df.sort_values(by="is_active", ascending=False).drop(columns=["is_active"])
     
@@ -110,7 +108,7 @@ def process_and_upload():
 
     try:
         payload = {
-            "content": f"📊 NSE Corporate Announcements Report (30-Symbol Live Feed)\nGenerated At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST"
+            "content": f"📊 NSE Daily Corporate Announcements Report (30-Symbol Light Feed)\nGenerated At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST"
         }
         with open(csv_filename, "rb") as file_to_upload:
             files = {"file": (csv_filename, file_to_upload, "text/csv")}
@@ -118,7 +116,7 @@ def process_and_upload():
             if response.status_code < 300:
                 logging.info("CSV snapshot successfully delivered to Discord.")
             else:
-                logging.error(f"Discord upload rejected payload. Server responded with: {response.status_code}")
+                logging.error(f"Discord upload failed. Status code: {response.status_code}")
     except Exception as e:
         logging.error(f"Failed to transmit data to Discord: {e}")
     finally:
