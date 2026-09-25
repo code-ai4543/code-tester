@@ -21,7 +21,7 @@ jobs:
 
     - name: Install Python Dependencies
       run: |
-        python -ms pip install --upgrade pip
+        python -m pip install --upgrade pip
         pip install requests pandas
 
     - name: Execute Scraper Engine
