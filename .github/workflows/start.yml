@@ -1,9 +1,9 @@
 name: Run NSE Scraper Loop
 
 on:
-  schedule:
+
     # Restarts the background loop runner every 3 hours automatically
-    - cron: '0 */3 * * *'
+  
   workflow_dispatch:
 
 concurrency:
